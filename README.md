@@ -1,1 +1,1 @@
-Run ddc_cblf (ddc_cblf_poly) for linear (nonlinear) discrete time system. 
+Run "ddc_clf_0226.m" for linear system with only lyap constraint d1. 
