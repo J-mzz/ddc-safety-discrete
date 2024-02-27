@@ -4,29 +4,56 @@ function x = getDataRND(eg,eps,N)
 % u \in [-1,1]
 
 box = 5;
+switch eg
+    case {1,2}
+        syms x1 x2
+        vars = [x1;x2];
+        [f,g] = getSystem(eg,vars);
+        
+        x = [];
+        for i = 1:N
+            
+            u = 2*rand(1,1)-1;
+        
+	        noise = eps*(2*rand(2,1)-1);
+            
+            x0 = (2*rand(2,1)-1) * box;
+            
+            x1 = x0(1);
+            x2 = x0(2);
+            
+            xdot = subs(f+g*u+noise);
+            
+            curr = [u,i,x1,x2,xdot(1),xdot(2)];
+            
+            x = [x;curr];
+        end
 
-syms x1 x2
-vars = [x1;x2];
-[f,g] = getSystem(eg,vars);
+    case 3
+        syms x1
+        vars = x1;
+        [f,g] = getSystem(eg,vars);
+        
+        x = [];
+        for i = 1:N
+            
+            u = 2*rand(1,1)-1;
+        
+	        noise = eps*(2*rand(1,1)-1);
+            
+            x0 = (2*rand(1,1)-1) * box;
+            
+            x1 = x0;
+            
+            xdot = subs(f+g*u+noise);
+            
+            curr = [u,i,x1,x1,xdot,xdot];
+            
+            x = [x;curr];
+        end
 
-x = [];
-for i = 1:N
-    
-    u = 2*rand(1,1)-1;
-
-	noise = eps*(2*rand(2,1)-1);
-    
-    x0 = (2*rand(2,1)-1) * box;
-    
-    x1 = x0(1);
-    x2 = x0(2);
-    
-    xdot = subs(f+g*u+noise);
-    
-    curr = [u,i,x1,x2,xdot(1),xdot(2)];
-    
-    x = [x;curr];
 end
 
 x = double(x);
+
 end
