@@ -1,7 +1,7 @@
 close all;clear;clc
 yalmip('clear')
 
-rng(1)
+rng(10)
 
 %% system and data generation
 
