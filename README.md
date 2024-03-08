@@ -1,1 +1,3 @@
-Run "ddc_clf_0226.m" for linear system with only lyap constraint d1. 
+Files in code folder generate data on data-driven safe control for nonlinear systems.
+
+Run post_plot for figures.
