@@ -267,7 +267,7 @@ for j = 1:10
 
     opts = sdpsettings('solver','mosek','verbose',0);
     coeff = [cp;c01;c02;c11;c12;c21;c22;c31;c32;c41;c42;c51;c52;c61;c62];
-    sol = solvesos(F, obj, opts, coeff)
+    sol = solvesos(F, obj, opts, coeff);
 %     if sol.problem
 %         error('error')
 %     end
