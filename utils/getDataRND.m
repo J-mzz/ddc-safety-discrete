@@ -52,6 +52,30 @@ switch eg
             x = [x;curr];
         end
 
+   case 4
+        syms x1 x2 x3
+        vars = [x1;x2;x3];
+        [f,g] = getSystem(eg,vars);
+        
+        x = [];
+        for i = 1:N
+            
+            u = 2*rand(1,1)-1;
+        
+	        noise = eps*(2*rand(3,1)-1);
+            
+            x0 = (2*rand(3,1)-1) * box;
+            
+            x1 = x0(1);
+            x2 = x0(2);
+            x3 = x0(3);
+
+            xdot = subs(f+g*u+noise);
+            
+            curr = [u,i,x1,x2,x3,xdot(1),xdot(2),xdot(3)];
+            
+            x = [x;curr];
+        end
 end
 
 x = double(x);
