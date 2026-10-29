@@ -1,32 +1,43 @@
+%% Example 3, controller designed WITHOUT the safety constraint
+% Same system and data as example3_safe.m, but Theorem 1 and the online
+% step only enforce stability; the safety requirement
+% h(x) = (x1 - 1)^2 + (x2 + 1)^2 - 1 >= 0 is ignored.
+
 close all;clear;clc
 yalmip('clear')
 
-rng(1)
+%% Settings
+eps     = 1e-2;     % noise bound on the data
+c3      = 1e-2;     % decrease rate in Theorem 1: V(x+) <= V(x) - c3*||x||^2
+x0      = [2; 1];   % initial state
+n_steps = 10;       % closed-loop steps
+lb      = -2;       % input set U = [lb, ub]
+ub      = 2;
+deg     = 4;        % degree of the lower bound p(u) in the online step
 
-%% system and data generation system with dim 1
+rng(1)
+addpath(genpath(fullfile(fileparts(mfilename('fullpath')), 'utils')))
+
+%% System and data
 
 % yalmip setup
 sdpvar x1 x2 x3 x4
 var = [x1;x2];              % x
-var_lift = [x3;x4];         % \tilde{x}: x3 = next(x1), x4 = next(x2)
+var_lift = [x3;x4];         % \tilde{x} = x+: x3 = next(x1), x4 = next(x2)
 var_aug = [var; var_lift];  % [x; \tilde{x}]
 
-% define DT system: x+ = f(x) + g(x)*u(x) + noise
-eg = 2;                     % 1 (linear) or 2 (nonlinear) or 3 (scalar)
-[f,g] = getSystem(eg,var); 
+% true system x+ = f(x) + g*u (see utils/getSystem.m)
+eg = 2;
+[f,g] = getSystem(eg,var);
 
-% setup
+% problem dimensions
 Cons = setCons(eg);
-
-% noise level
-eps = 1e-2;                    % noise level for robust data driven
-epsw = 0;                   % noise level of disturbance
 
 % generate data, with input u \in [-1,1]
 X = getDataRND(eg,eps,Cons.T);
 
-% consistency set
-[A,xi] = getCons2_new(X,Cons);    % with stronger a priori
+% consistency set: data matrices for the dictionary [x1, x2, x1^2]
+[A,xi] = getConsEx3(X,Cons);
 
 % check enough data
 N = [A; -A];
@@ -41,7 +52,7 @@ e = [eps*ones(Cons.n*Cons.T,1)+xi; eps*ones(Cons.n*Cons.T,1)-xi];
 Vert = con2vert(N,e);
 oldVert = Vert;
 
-% bounding box for vertices
+% bounding box for vertices (only vmin and vmax are used below)
 vmax = max(Vert,[],1);
 vmin = min(Vert,[],1);
 newVert = [];
@@ -60,13 +71,9 @@ for number_vert = 1:2^vertlen
 end
 Vert = newVert;
 
-%% try to solve
-n   = Cons.n;
-T   = Cons.T;
 df  = Cons.df;
-dg  = Cons.dg;
 
-%% Solve Thm 1
+%% Theorem 1 without the safety constraint
 
 dp = 2;     % degree of vecter polynomial p = [p1; p2]
 dv = 2;     % degree of lyapunov function v
@@ -80,10 +87,10 @@ dv = 2;     % degree of lyapunov function v
 [v, cv] =  polynomial(var, dv, 1);          % 1 -> without constant
 [vt,cvt] = polynomial(var_lift, dv, 1);
 
-% multipler s: sos( H(xt)-s1*H(x) ) 
+% multipler s (not used without the safety constraint)
 [s,cs] = polynomial(var_aug, dp, 0);
 
-% vp and vf
+% monomials of f: [x1, x2, x1^2]
 [~,~,vf] = polynomial(var,df,1);
 vf = vf([1 2 3]);
 
@@ -93,12 +100,11 @@ for i = 1:size(N,1)
     Y(i) = polynomial(var_aug, dv, 0);
 end
 
-% for stable and safety set P2
-c3 = 1e-2;
-r = [- kron([p1, p2], vf')]; 
+% decrease of V for all f in the consistency set
+r = [- kron([p1, p2], vf')];
 d = [v  - vt - c3*(var'*var) - [p1, p2]*var_lift + p2u];
 
-F = [ 
+F = [
      coefficients(r - Y*N, var_aug) == 0,...
      (sos(-Y*e + d)):'tagged',...
      sos(Y),...
@@ -111,16 +117,14 @@ opts = sdpsettings('solver','mosek','verbose',0);
 [sol,sol_u,sol_Q] = solvesos(F, [], opts, [c1;c2;c2u;cv;cvt;cs;coefficients(Y,var_aug)]);
 sol
 
-%% extract solution Thm1
+%% Extract the solution of Theorem 1
 syms z1 z2 z3 z4
 var = [z1;z2];
 var_aug = [z1;z2;z3;z4];
 
-cv = value(cv);   %  cv = cv.*(cv>=1e-6 | cv<=-1e-6);    % clean small values
+cv = value(cv);
 vv = monomials(var, 1:dv);
 V = cv'*vv;
-% check V sos
-% findsos(V)
 V = matlabFunction(V);
 
 VF = monomials(var,1:df);
@@ -128,80 +132,74 @@ VF = VF([1 2 3]);
 VF = matlabFunction(VF);
 
 % get system in syms
-[f,g] = getSystem(eg,var); 
+[f,g] = getSystem(eg,var);
 FF = matlabFunction(f);
 
-% % check if V is sos
+% level sets of V
 figure()
 fc = fcontour(V,[-2 2 -2 2]);
 fc.LevelList = [0:20];
-% colorbar
 axis square
 hold on
 
-%% 0301 Thm 2, use gloptipoly due to the safety constraint
+%% Online step without the safety constraint
 
-% initial point 
-x = [2;1];
+x = x0;
 UU = [];
 XX = x;
 VV = V(x(1),x(2));
 
-for j = 1:10
+for j = 1:n_steps
     fprintf('%d-th iteration \n',j)
     % yalmip setup
     yalmip('clear')
-    
+
+    % monomials of f at the current state
     vf = VF(x(1),x(2));
-    
-    %% ??? how to solve for u
-    
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Attemp 1
-    ub = 2;
-    lb = -2;
-    
-    deg = 4;
-    
+
+    % input u and the unknown coefficients theta of f
     u = sdpvar(1);
-    f = sdpvar(6,1);
-    
+    theta = sdpvar(6,1);
+
+    % lower bound p(u) and Psatz multipliers for u in U and theta in the box
     [p,cp] = polynomial(u, deg, 0);
-    
-    [s01,c01] = polynomial(f, deg-1, 0);
-    [s02,c02] = polynomial(f, deg-1, 0);
-    
-    [s11,c11] = polynomial(f, deg-1, 0);
-    [s12,c12] = polynomial(f, deg-1, 0);
 
-    [s21,c21] = polynomial(f, deg-1, 0);
-    [s22,c22] = polynomial(f, deg-1, 0);
+    [s01,c01] = polynomial(theta, deg-1, 0);
+    [s02,c02] = polynomial(theta, deg-1, 0);
 
-    [s31,c31] = polynomial(f, deg-1, 0);
-    [s32,c32] = polynomial(f, deg-1, 0);
+    [s11,c11] = polynomial(theta, deg-1, 0);
+    [s12,c12] = polynomial(theta, deg-1, 0);
 
-    [s41,c41] = polynomial(f, deg-1, 0);
-    [s42,c42] = polynomial(f, deg-1, 0);
+    [s21,c21] = polynomial(theta, deg-1, 0);
+    [s22,c22] = polynomial(theta, deg-1, 0);
 
-    [s51,c51] = polynomial(f, deg-1, 0);
-    [s52,c52] = polynomial(f, deg-1, 0);
+    [s31,c31] = polynomial(theta, deg-1, 0);
+    [s32,c32] = polynomial(theta, deg-1, 0);
 
-    [s61,c61] = polynomial(f, deg-1, 0);
-    [s62,c62] = polynomial(f, deg-1, 0);
-    
-    % objective
+    [s41,c41] = polynomial(theta, deg-1, 0);
+    [s42,c42] = polynomial(theta, deg-1, 0);
+
+    [s51,c51] = polynomial(theta, deg-1, 0);
+    [s52,c52] = polynomial(theta, deg-1, 0);
+
+    [s61,c61] = polynomial(theta, deg-1, 0);
+    [s62,c62] = polynomial(theta, deg-1, 0);
+
+    % objective: maximize the integral of p over U
     obj = 0;
     for i = 1:length(cp)
         integral = 1/i*(ub^i - lb^i);
         obj = obj + cp(i)*integral;
     end
     obj = -obj;
-    
-    xk1 = vf'*f(1:3) + g(1)*u;
-    xk2 = vf'*f(4:6) + g(2)*u;
-    
+
+    % next state as a function of (u, theta)
+    xk1 = vf'*theta(1:3) + g(1)*u;
+    xk2 = vf'*theta(4:6) + g(2)*u;
+
     Delta = V(x(1),x(2)) - V(xk1,xk2) - c3*(x'*x);
-    
-    h1 = Delta - p;
+
+    h1 = Delta - p;         % p(u) <= decrease of V
 
     % constraints
     F = [   sos(s01); sos(s02); ...
@@ -211,50 +209,43 @@ for j = 1:10
             sos(s41); sos(s42); ...
             sos(s51); sos(s52); ...
             sos(s61); sos(s62); ];
-        
-    F = [F; sos(h1 - s01*(u   - lb)     + s02*(u   - ub)... 
-                   - s11*(f(1)-vmin(1)) + s12*(f(1)-vmax(1))... 
-                   - s21*(f(2)-vmin(2)) + s22*(f(2)-vmax(2))... 
-                   - s31*(f(3)-vmin(3)) + s32*(f(3)-vmax(3))... 
-                   - s41*(f(4)-vmin(4)) + s42*(f(4)-vmax(4))... 
-                   - s51*(f(5)-vmin(5)) + s52*(f(5)-vmax(5))... 
-                   - s61*(f(6)-vmin(6)) + s62*(f(6)-vmax(6)) )];
+
+    F = [F; sos(h1 - s01*(u   - lb)     + s02*(u   - ub)...
+                   - s11*(theta(1)-vmin(1)) + s12*(theta(1)-vmax(1))...
+                   - s21*(theta(2)-vmin(2)) + s22*(theta(2)-vmax(2))...
+                   - s31*(theta(3)-vmin(3)) + s32*(theta(3)-vmax(3))...
+                   - s41*(theta(4)-vmin(4)) + s42*(theta(4)-vmax(4))...
+                   - s51*(theta(5)-vmin(5)) + s52*(theta(5)-vmax(5))...
+                   - s61*(theta(6)-vmin(6)) + s62*(theta(6)-vmax(6)) )];
 
     opts = sdpsettings('solver','mosek','verbose',0);
     coeff = [cp;c01;c02;c11;c12;c21;c22;c31;c32;c41;c42;c51;c52;c61;c62];
     sol = solvesos(F, obj, opts, coeff);
-%     if sol.problem
-%         error('error')
-%     end
 
-    
     % extract p
     syms u
     cp = value(cp);
     vp = monomials(u, 0:deg);
     P = cp'*vp;
     P = matlabFunction(P);
-    
+
     t = lb:.01:ub;
     for i = 1:length(t)
         Pu(i) = P(t(i));
     end
-    
-    % find u with 
+
+    % apply the input that maximizes p on a grid of U
     [~,ind] = max(Pu);
     u = t(ind);
-    
-    
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Attemp 1
-    
+
     % update system dynamics
     xnext = FF(x(1),x(2))+g*u;
     dV = V(x(1),x(2)) - V(xnext(1),xnext(2));
-    
+
     x = xnext;
     UU = [UU, u];
     XX = [XX, xnext];
-    VV = [VV, V(xnext(1),xnext(2))]; 
+    VV = [VV, V(xnext(1),xnext(2))];
 
 end
 
@@ -263,9 +254,3 @@ plot(XX(1,:),XX(2,:),'--*')
 xlabel('x_1')
 ylabel('x_2')
 hold off
-
-% figure()
-% plot(1:length(VV),VV)
-% xlabel('k')
-% ylabel('V(x_k)')
-% legend('lyap')

@@ -1,32 +1,57 @@
+%% Example 2 of "Data-Driven Safe Control of Discrete-Time Non-Linear Systems"
+% Safe controller for a 3D polynomial system with a convex (half-space)
+% safety requirement (Fig. 2).
+%
+% True system (used to generate the data and to simulate):
+%   x+ = [x2^2 + x3; x1*x2^2 + x3; 0] + [2; -1; 1]*u
+% Safe set: h(x) = 1 - x1 >= 0
+% Prior:    f is spanned by [x3, x2^2, x1*x2^2], g = [2; -1; 1] is known;
+%           8 samples with ||w||_inf <= 0.01
+%
+% Steps
+%   1. Build the consistency set of f from noisy data and the bounding box
+%      of its vertices.
+%   2. Theorem 1: SOS program for a Lyapunov function V that certifies safe
+%      stabilization of every system in the consistency set.
+%   3. Theorem 2: at every step, compute the input online by a convex
+%      program that decreases V and keeps x+ safe for all box vertices.
+%
+% Figures: 3D trajectory with the unsafe half-space, and V along the
+% trajectory. example2_unsafe.m designs the controller without the safety
+% constraint.
+
 close all;clear;clc
 yalmip('clear')
 
-rng(3)
+%% Settings
+eps     = 1e-2;         % noise bound on the data
+cc      = 1e-1;         % decrease rate in Theorem 1: V(x+) <= V(x) - cc*||x||^2
+x0      = [-1; 1; 1];   % initial state
+n_steps = 10;           % closed-loop steps
 
-%% system and data generation  system with dim 1
+rng(3)
+addpath(genpath(fullfile(fileparts(mfilename('fullpath')), 'utils')))
+
+%% System and data
 
 % yalmip setup
 sdpvar x1 x2 x3 x4 x5 x6
-var = [x1;x2;x3];              % x
-var_lift = [x4;x5;x6];         % \tilde{x}: x3 = next(x1), x4 = next(x2)
+var = [x1;x2;x3];           % x
+var_lift = [x4;x5;x6];      % \tilde{x} = x+: x4 = next(x1), x5 = next(x2), x6 = next(x3)
 var_aug = [var; var_lift];  % [x; \tilde{x}]
 
-% define DT system: x+ = f(x) + g(x)*u(x) + noise
-eg = 4;                     % 1 (linear), 2 (nonlinear), 3 (scalar), 4 (3d)
-[f,g] = getSystem(eg,var); 
+% true system x+ = f(x) + g*u (see utils/getSystem.m)
+eg = 4;
+[f,g] = getSystem(eg,var);
 
-% setup
+% problem dimensions
 Cons = setCons(eg);
-
-% noise level
-eps = 1e-2;                    % noise level for robust data driven
-epsw = 0;                   % noise level of disturbance
 
 % generate data, with input u \in [-1,1]
 X = getDataRND(eg,eps,Cons.T);
 
-% consistency set
-[A,xi] = getCons3(X,Cons);    % for eg = 3
+% consistency set: data matrices
+[A,xi] = getConsEx2(X,Cons);
 
 % check enough data
 N = [A; -A];
@@ -37,7 +62,6 @@ e = [eps*ones(Cons.n*Cons.T,1)+xi; eps*ones(Cons.n*Cons.T,1)-xi];
 
 % keep nontrivial constraints
 [N, e] = nontrivial_constraints(N, e);
-
 
 % find vertices
 Vert = con2vert(N,e);
@@ -62,51 +86,31 @@ for number_vert = 1:2^vertlen
 end
 Vert = newVert;
 
+%% Safe set h(x) = 1 - x1 >= 0 (half-space)
+h  = 1-x1;
+ht = 1-x3;
 
-%% Unsafe region
-isLinearH = 1;
-
-if isLinearH
-    h  = 1-x1;
-    ht = 1-x3;
-else
-    r0 = 1;         % radius
-    c0 = [1; -2];	% center
-    
-    r0 = 4;         % radius
-    c0 = [0; 0; 0];	% center
-    
-    h  = -r0 + (x1-c0(1))^2 + (x2-c0(2))^2 + (x3-c0(3))^2; % unsafe: h(x)  < 0
-    ht = -r0 + (x4-c0(1))^2 + (x5-c0(2))^2 + (x6-c0(3))^2; % unsafe: h(xt) < 0
-    h = -h;
-    ht = -ht;
-end
-
-%% try to solve
-n   = Cons.n;
-T   = Cons.T;
 df  = Cons.df;
-dg  = Cons.dg;
 
-%% Solve Thm 1
+%% Theorem 1: SOS program for the Lyapunov function V
 
-dp = 2;     % degree of vecter polynomial p = [p1; p2]
+dp = 2;     % degree of vecter polynomial p = [p1; p2; p3]
 dv = 2;     % degree of lyapunov function v
 
-% g = [0; 1] hard-coded
+% g = [2; -1; 1] hard-coded
 [p1,c1] =   polynomial(var_aug, dp, 0);
 [p2,c2] =   polynomial(var_aug, dp, 0);
 [p3,c3] =   polynomial(var_aug, dp, 0);
-[p3u,c3u] = polynomial(var_aug, dp, 0); % p2u = p2*u
+[p3u,c3u] = polynomial(var_aug, dp, 0); % p3u = p3*u
 
 % lyapunov function v
 [v, cv] =  polynomial(var, dv, 1);          % 1 -> without constant
 [vt,cvt] = polynomial(var_lift, dv, 1);
 
-% multipler s: sos( H(xt)-s1*H(x) ) 
+% multipler s: sos( H(xt)-s1*H(x) )
 [s,cs] = polynomial(var_aug, dp, 0);
 
-% vp and vf
+% monomials of f: [x3, x2^2, x1*x2^2]
 [~,~,vf] = polynomial(var,df,1);
 vf = vf([3 6 12]);
 
@@ -117,14 +121,14 @@ for i = 1:size(N,1)
     Y(2,i) = polynomial(var_aug, dv, 0);
 end
 
-% for stable and safety set P2
-cc = 1e-1;
+% decrease of V (first row) and safety (second row) for all f in the
+% consistency set
 r = [- kron([p1, p2, p3], vf');
-     - kron([p1, p2, p3], vf')]; 
+     - kron([p1, p2, p3], vf')];
 d = [v  - vt - cc*(var'*var) - [p1, p2, p3]*var_lift + p3u;
      ht - s*h                - [p1, p2, p3]*var_lift + p3u];
 
-F = [ 
+F = [
      coefficients(r - Y*N, var_aug) == 0,...
      (sos(-Y*e + d)):'tagged',...
      sos(Y),...
@@ -137,39 +141,17 @@ opts = sdpsettings('solver','mosek','verbose',0);
 [sol,sol_u,sol_Q] = solvesos(F, [], opts, [c1;c2;c3;c3u;cv;cvt;cs;coefficients(Y,var_aug)]);
 sol
 
-%% extract solution Thm1
+%% Extract the solution of Theorem 1
 syms z1 z2 z3 z4 z5 z6
 var = [z1;z2;z3];
 var_aug = [z1;z2;z3;z4;z5;z6];
 
-cv = value(cv);   %  cv = cv.*(cv>=1e-6 | cv<=-1e-6);    % clean small values
+cv = value(cv);
 vv = monomials(var, 1:dv);
 V = cv'*vv;
-% check if V is sos
-% findsos(V)
-
 V = matlabFunction(V);
 
-% c1  = value(c1);
-% c2  = value(c2);  %  c2  = c2.*(c2>=1e-6 | c2<=-1e-6);
-% c2u = value(c2u); %  c2u = c2u.*(c2u>=1e-6 | c2u<=-1e-6);
-% c2u(1) = 0;
-% 
-% vp = monomials(var_aug, 0:dp);
-% P1 = c1'*vp;
-% P2 = c2'*vp;
-% P2U = c2u'*vp;
-% 
-% P1 = matlabFunction(P1);
-% P2 = matlabFunction(P2);
-% P2U = matlabFunction(P2U);
-
-if isLinearH
-    H = 1-z1;
-else
-    H = -r0 + (z1-c0(1))^2 + (z2-c0(2))^2 + (z3-c0(3))^2; % unsafe: h(x)  < 0
-    H = -H;
-end
+H = 1-z1;
 H = matlabFunction(H);
 
 VF = monomials(var,1:df);
@@ -177,86 +159,63 @@ VF = VF([3 6 12]);
 VF = matlabFunction(VF);
 
 % get system in syms
-[f,g] = getSystem(eg,var); 
+[f,g] = getSystem(eg,var);
 FF = matlabFunction(f);
 
-% % check if V is sos
-% figure()
-% fc = fcontour(V,[-2 2 -2 2]);
-% fc.LevelList = [0:20];
-% % colorbar
-% axis square
-% hold on
+%% Theorem 2: compute the input online
 
-%% 0301 Thm 2, use gloptipoly due to the safety constraint
-
-% initial point 
-x = [-1; 1; 1];
+x = x0;
 UU = [];
 XX = x;
 VV = V(x(1),x(2),x(3));
 
-for j = 1:10
+for j = 1:n_steps
     fprintf('%d-th iteration \n',j)
     % yalmip setup
     yalmip('clear')
     sdpvar u
 
-    % vf
+    % monomials of f at the current state
     vf = VF(x(1),x(2),x(3));
 
-    % optimize
+    % decrease V and stay safe for every vertex of the bounding box
     F = [];
     for i = 1:length(Vert)
         xt = kron(eye(3),vf')*Vert(i,:)'+g*u;
-%         xt = kron(eye(3),vf')*Vert+g*u; % for test only, with true vert
-        if isLinearH
-            F = [ F;
-                 V(xt(1),xt(2),xt(3)) <= V(x(1),x(2),x(3))-cc*(x'*x);
-                 H(xt(1)) >= 0;
-                 ];
-        else
-            F = [ F;
-                 V(xt(1),xt(2),xt(3)) <= V(x(1),x(2),x(3))-cc*(x'*x);
-                 H(xt(1),xt(2),xt(3)) >= 0;
-                 ];
-        end
+        F = [ F;
+             V(xt(1),xt(2),xt(3)) <= V(x(1),x(2),x(3))-cc*(x'*x);
+             H(xt(1)) >= 0;
+             ];
     end
     obj = u*u;
     opts = sdpsettings('solver','mosek','verbose', 0);
     sol = optimize(F,obj,opts);
 
     if sol.problem
-        error('error: infeasible problem')
+        error('Online problem at step %d: %s', j, sol.info)
     end
-    
+
+    % apply u to the true system
     u = value(u);
     xnext = FF(x(1),x(2),x(3))+g*u;
     dV = V(x(1),x(2),x(3)) - V(xnext(1),xnext(2),xnext(3));
-    
+
     x = xnext;
     UU = [UU, u];
     XX = [XX, xnext];
-    VV = [VV, V(xnext(1),xnext(2),xnext(3))]; 
+    VV = [VV, V(xnext(1),xnext(2),xnext(3))];
 
 end
 
 plot3(XX(1,:),XX(2,:),XX(3,:))
 hold on
-if isLinearH
-    unsafe1 = [1  1  1  1];
-    unsafe2 = [-2 2  2 -2];
-    unsafe3 = [-2 -2 2  2];
-    fill3(unsafe1,unsafe2,unsafe3,'r');
-else
-    theta = (0:60)/30*pi;
-    X_unsafe = c0(1) + sqrt(r0)*cos(theta);
-    Y_unsafe = c0(2) + sqrt(r0)*sin(theta);
-    plot(X_unsafe,Y_unsafe,'r')
-    ylim([-2 2])
-    xlim([-2 2])
-    axis square
-end
+
+% unsafe half-space boundary x1 = 1
+unsafe1 = [1  1  1  1];
+unsafe2 = [-2 2  2 -2];
+unsafe3 = [-2 -2 2  2];
+fill3(unsafe1,unsafe2,unsafe3,'r');
+
 xlabel x1
 ylabel x2
 zlabel x3
