@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper below."
+title: "ddc-safety-discrete: code for Data-driven safe control of discrete-time non-linear systems"
+type: software
+authors:
+  - family-names: Zheng
+    given-names: Jian
+repository-code: "https://github.com/J-mzz/ddc-safety-discrete"
+license: MIT
+preferred-citation:
+  type: article
+  title: "Data-driven safe control of discrete-time non-linear systems"
+  authors:
+    - family-names: Zheng
+      given-names: Jian
+    - family-names: Miller
+      given-names: Jared
+    - family-names: Sznaier
+      given-names: Mario
+  journal: "IEEE Control Systems Letters"
+  volume: 8
+  start: 1553
+  end: 1558
+  year: 2024
+  publisher:
+    name: IEEE
+  doi: "10.1109/LCSYS.2024.3412943"

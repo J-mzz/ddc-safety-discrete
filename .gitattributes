@@ -1,0 +1,10 @@
+# Normalize line endings in the repository; MATLAB reads LF and CRLF alike.
+* text=auto
+*.m text diff=matlab
+*.md text
+*.cff text
+*.mat binary
+*.fig binary
+*.mlx binary
+*.png binary
+*.pdf binary
